@@ -161,19 +161,20 @@ public class GatewayProxyService : IGatewayProxyService
     {
         try
         {
-            var handshakeMsg = new
+            // 首先发送连接挑战响应
+            var challengeResponse = new
             {
                 type = "event",
-                @event = "connect.authenticate",
+                @event = "connect.challenge",
                 payload = new
                 {
-                    token = _gatewayToken,
+                    response = _gatewayToken,  // 使用 Gateway Token 作为挑战响应
                     clientType = "middleware",
                     capabilities = new[] { "message.forward", "file.proxy", "encryption.handle" }
                 }
             };
 
-            var json = JsonSerializer.Serialize(handshakeMsg);
+            var json = JsonSerializer.Serialize(challengeResponse);
             var bytes = Encoding.UTF8.GetBytes(json);
             
             await _webSocket.SendAsync(
@@ -182,7 +183,7 @@ public class GatewayProxyService : IGatewayProxyService
                 true,
                 CancellationToken.None);
                 
-            _logger.LogDebug("Sent handshake to Gateway");
+            _logger.LogDebug("Sent challenge response to Gateway");
         }
         catch (Exception ex)
         {

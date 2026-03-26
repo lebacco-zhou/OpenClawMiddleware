@@ -1,4 +1,4 @@
-using System.Net.Http;
+using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
 
@@ -8,69 +8,87 @@ public interface IGatewayProxyService
 {
     Task<string> ForwardAsync(string message, string senderId);
     Task<bool> HealthCheckAsync();
+    Task InitializeAsync();
 }
 
 public class GatewayProxyService : IGatewayProxyService
 {
-    private readonly HttpClient _httpClient;
+    private ClientWebSocket? _webSocket;
     private readonly ILogger<GatewayProxyService> _logger;
-    private readonly string _gatewayBaseUrl;
+    private readonly string _gatewayWsUrl;
     private readonly string _gatewayToken;
     private readonly int _timeoutSeconds;
     private readonly int _retryCount;
+    private readonly SemaphoreSlim _lock = new(1, 1);
+    private readonly Dictionary<string, TaskCompletionSource<string>> _pendingRequests = new();
+    private bool _isConnected = false;
 
-    public GatewayProxyService(ILogger<GatewayProxyService> logger, IConfiguration config, HttpClient httpClient)
+    public GatewayProxyService(ILogger<GatewayProxyService> logger, IConfiguration config)
     {
         _logger = logger;
-        _httpClient = httpClient;
-        _gatewayBaseUrl = config.GetValue<string>("Gateway:BaseUrl") ?? "http://localhost:18789";
+        var gatewayBaseUrl = config.GetValue<string>("Gateway:BaseUrl") ?? "http://localhost:18789";
+        // 将 HTTP URL 转換為 WebSocket URL
+        _gatewayWsUrl = gatewayBaseUrl.Replace("https://", "wss://").Replace("http://", "ws://");
         _gatewayToken = config.GetValue<string>("Gateway:Token") ?? "";
         _timeoutSeconds = config.GetValue<int>("Gateway:TimeoutSeconds", 30);
         _retryCount = config.GetValue<int>("Gateway:RetryCount", 3);
     }
 
+    public async Task InitializeAsync()
+    {
+        _ = Task.Run(WebSocketReceiveLoopAsync); // 启动接收循环
+    }
+
     public async Task<string> ForwardAsync(string message, string senderId)
     {
+        var messageId = Guid.NewGuid().ToString();
+        
         var request = new
         {
             channel = "middleware-client",
             senderId = senderId,
             message = message,
-            timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+            timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+            messageId = messageId
         };
 
         var json = JsonSerializer.Serialize(request);
-        var content = new StringContent(json, Encoding.UTF8, "application/json");
+        var bytes = Encoding.UTF8.GetBytes(json);
+
+        var tcs = new TaskCompletionSource<string>();
+        _pendingRequests[messageId] = tcs;
 
         for (int i = 0; i < _retryCount; i++)
         {
             try
             {
-                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(_timeoutSeconds));
-                
-                // 使用 Gateway 的 API 端点
-                var response = await _httpClient.PostAsync(
-                    $"{_gatewayBaseUrl}/api/message",
-                    content,
-                    cts.Token);
+                await EnsureConnectedAsync();
 
-                if (response.IsSuccessStatusCode)
+                if (_webSocket?.State != WebSocketState.Open)
                 {
-                    var responseBody = await response.Content.ReadAsStringAsync();
-                    _logger.LogDebug("Gateway response: {Response}", responseBody);
-                    return responseBody;
+                    throw new Exception("WebSocket is not connected");
                 }
 
-                _logger.LogWarning("Gateway returned {Status}: {Response}", 
-                    response.StatusCode, await response.Content.ReadAsStringAsync());
+                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(_timeoutSeconds));
+                
+                await _webSocket.SendAsync(
+                    new ArraySegment<byte>(bytes),
+                    WebSocketMessageType.Text,
+                    true,
+                    cts.Token);
+
+                // 等待响应
+                var response = await tcs.Task.TimeoutAfter(TimeSpan.FromSeconds(_timeoutSeconds));
+                return response;
             }
-            catch (TaskCanceledException)
+            catch (TimeoutException)
             {
                 _logger.LogWarning("Gateway request timeout (attempt {Attempt}/{Max})", i + 1, _retryCount);
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error forwarding to Gateway (attempt {Attempt}/{Max})", i + 1, _retryCount);
+                _isConnected = false; // 标记为断开连接
             }
 
             if (i < _retryCount - 1)
@@ -79,6 +97,7 @@ public class GatewayProxyService : IGatewayProxyService
             }
         }
 
+        _pendingRequests.TryRemove(messageId, out _);
         throw new Exception("Failed to forward message to Gateway after all retries");
     }
 
@@ -86,13 +105,139 @@ public class GatewayProxyService : IGatewayProxyService
     {
         try
         {
-            var response = await _httpClient.GetAsync($"{_gatewayBaseUrl}/api/status");
-            return response.IsSuccessStatusCode;
+            await EnsureConnectedAsync();
+            return _isConnected && _webSocket?.State == WebSocketState.Open;
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Gateway health check failed");
+            _isConnected = false;
             return false;
         }
+    }
+
+    private async Task EnsureConnectedAsync()
+    {
+        if (_isConnected && _webSocket?.State == WebSocketState.Open)
+        {
+            return;
+        }
+
+        await _lock.WaitAsync();
+        try
+        {
+            if (_isConnected && _webSocket?.State == WebSocketState.Open)
+            {
+                return; // 双重检查
+            }
+
+            _webSocket?.Dispose();
+            _webSocket = new ClientWebSocket();
+            
+            // 设置授权头
+            _webSocket.Options.SetRequestHeader("Authorization", $"Bearer {_gatewayToken}");
+            
+            await _webSocket.ConnectAsync(new Uri($"{_gatewayWsUrl}/ws"), CancellationToken.None);
+            _isConnected = true;
+            _logger.LogInformation("Connected to Gateway at {GatewayWsUrl}", _gatewayWsUrl);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to connect to Gateway at {GatewayWsUrl}", _gatewayWsUrl);
+            _isConnected = false;
+            throw;
+        }
+        finally
+        {
+            _lock.Release();
+        }
+    }
+
+    private async Task WebSocketReceiveLoopAsync()
+    {
+        var buffer = new byte[4096];
+        
+        while (!CancellationToken.None.IsCancellationRequested)
+        {
+            try
+            {
+                if (_webSocket?.State != WebSocketState.Open)
+                {
+                    await Task.Delay(1000); // 等待重连
+                    continue;
+                }
+
+                var result = await _webSocket.ReceiveAsync(
+                    new ArraySegment<byte>(buffer),
+                    CancellationToken.None);
+
+                if (result.MessageType == WebSocketMessageType.Close)
+                {
+                    _logger.LogInformation("Gateway WebSocket closed, attempting to reconnect...");
+                    _isConnected = false;
+                    await Task.Delay(1000);
+                    continue;
+                }
+
+                if (result.MessageType == WebSocketMessageType.Text)
+                {
+                    var json = Encoding.UTF8.GetString(buffer, 0, result.Count);
+                    _logger.LogDebug("Received from Gateway: {Json}", json);
+                    
+                    try
+                    {
+                        using var doc = JsonDocument.Parse(json);
+                        if (doc.RootElement.TryGetProperty("messageId", out var messageIdElement))
+                        {
+                            var messageId = messageIdElement.GetString();
+                            if (!string.IsNullOrEmpty(messageId) && _pendingRequests.TryRemove(messageId, out var tcs))
+                            {
+                                tcs.TrySetResult(json);
+                            }
+                            else
+                            {
+                                // 这是一个不属于任何请求的响应，可能是广播消息
+                                _logger.LogDebug("Received unsolicited message from Gateway: {Json}", json);
+                            }
+                        }
+                        else
+                        {
+                            // 消息没有 messageId，可能是直接响应或广播
+                            _logger.LogDebug("Received message without messageId: {Json}", json);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "Error processing Gateway response: {Json}", json);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error in Gateway WebSocket receive loop");
+                _isConnected = false;
+                
+                // 等待一段时间后重试
+                await Task.Delay(1000);
+            }
+        }
+    }
+}
+
+public static class TaskExtensions
+{
+    public static async Task<T> TimeoutAfter<T>(this Task<T> task, TimeSpan timeout)
+    {
+        using var cts = new CancellationTokenSource(timeout);
+        var delayTask = Task.Delay(timeout, cts.Token);
+        var resultTask = await Task.WhenAny(task, delayTask);
+        
+        if (resultTask == delayTask)
+        {
+            throw new TimeoutException($"Task timed out after {timeout}");
+        }
+        
+        cts.Cancel(); // 取消延迟任务
+        return await task;
     }
 }

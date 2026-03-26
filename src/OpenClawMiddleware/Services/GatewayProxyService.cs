@@ -281,7 +281,7 @@ public class GatewayProxyService : IGatewayProxyService
             var responseMessage = new
             {
                 type = "event",
-                @event = "connect.authenticate",  // 应该是 authenticate 而不是 authenticated
+                @event = "connect.authenticated",  // Gateway 期望的认证完成事件
                 payload = new
                 {
                     token = _gatewayToken,  // 使用 Gateway Token 进行认证

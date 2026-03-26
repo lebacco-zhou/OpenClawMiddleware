@@ -141,9 +141,6 @@ public class GatewayProxyService : IGatewayProxyService
             await _webSocket.ConnectAsync(new Uri($"{_gatewayWsUrl}/ws"), CancellationToken.None);
             _isConnected = true;
             _logger.LogInformation("Connected to Gateway at {GatewayWsUrl}", _gatewayWsUrl);
-            
-            // 发送连接握手消息，符合 OpenClaw 协议
-            await SendHandshakeAsync();
         }
         catch (Exception ex)
         {
@@ -154,40 +151,6 @@ public class GatewayProxyService : IGatewayProxyService
         finally
         {
             _lock.Release();
-        }
-    }
-
-    private async Task SendHandshakeAsync()
-    {
-        try
-        {
-            // 首先发送连接挑战响应
-            var challengeResponse = new
-            {
-                type = "event",
-                @event = "connect.challenge",
-                payload = new
-                {
-                    response = _gatewayToken,  // 使用 Gateway Token 作为挑战响应
-                    clientType = "middleware",
-                    capabilities = new[] { "message.forward", "file.proxy", "encryption.handle" }
-                }
-            };
-
-            var json = JsonSerializer.Serialize(challengeResponse);
-            var bytes = Encoding.UTF8.GetBytes(json);
-            
-            await _webSocket.SendAsync(
-                new ArraySegment<byte>(bytes),
-                WebSocketMessageType.Text,
-                true,
-                CancellationToken.None);
-                
-            _logger.LogDebug("Sent challenge response to Gateway");
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to send handshake to Gateway");
         }
     }
     
@@ -229,7 +192,7 @@ public class GatewayProxyService : IGatewayProxyService
                         // 检查是否为挑战消息
                         if (doc.RootElement.TryGetProperty("type", out var typeElement) &&
                             typeElement.GetString() == "event" &&
-                            doc.RootElement.TryGetProperty("@event", out var eventElement) &&
+                            doc.RootElement.TryGetProperty("event", out var eventElement) &&
                             eventElement.GetString() == "connect.challenge")
                         {
                             // 处理挑战消息

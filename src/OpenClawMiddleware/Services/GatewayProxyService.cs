@@ -161,11 +161,11 @@ public class GatewayProxyService : IGatewayProxyService
     {
         try
         {
-            // 发送初始认证消息
-            var authMessage = new
+            // 发送连接请求消息
+            var connectMessage = new
             {
                 type = "event",
-                @event = "connect.authenticate",
+                @event = "connect.request",
                 payload = new
                 {
                     token = _gatewayToken,  // 使用 Gateway Token 进行认证
@@ -174,7 +174,7 @@ public class GatewayProxyService : IGatewayProxyService
                 }
             };
 
-            var json = JsonSerializer.Serialize(authMessage);
+            var json = JsonSerializer.Serialize(connectMessage);
             var bytes = Encoding.UTF8.GetBytes(json);
             
             await _webSocket.SendAsync(
@@ -183,11 +183,11 @@ public class GatewayProxyService : IGatewayProxyService
                 true,
                 CancellationToken.None);
                 
-            _logger.LogDebug("Sent initial authentication to Gateway");
+            _logger.LogDebug("Sent connection request to Gateway");
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to send initial authentication to Gateway");
+            _logger.LogError(ex, "Failed to send connection request to Gateway");
         }
     }
     

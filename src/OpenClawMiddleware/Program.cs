@@ -20,6 +20,7 @@ builder.Services.AddSingleton<ICryptoService, CryptoService>();
 builder.Services.AddSingleton<IClientTokenService, ClientTokenService>();
 builder.Services.AddSingleton<IFileStorageService, FileStorageService>();
 builder.Services.AddHttpClient<IGatewayProxyService, GatewayProxyService>();
+builder.Services.AddSingleton<IAuthHandler, AuthHandler>();
 builder.Services.AddSingleton<IMessageRouter, MessageRouter>();
 builder.Services.AddSingleton<IWebSocketService, WebSocketService>();
 builder.Services.AddHostedService<HeartbeatService>();

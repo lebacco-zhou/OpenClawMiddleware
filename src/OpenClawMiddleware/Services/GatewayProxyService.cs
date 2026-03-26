@@ -254,11 +254,11 @@ public class GatewayProxyService : IGatewayProxyService
         {
             _logger.LogInformation("Processing challenge from Gateway: {ChallengeJson}", challengeElement.ToString());
             
-            // 发送挑战响应 - 根据 Gateway 协议要求
+            // 发送认证响应 - 根据 Gateway 协议要求
             var responseMessage = new
             {
                 type = "event",
-                @event = "connect.authenticated",  // 使用正确的事件名称
+                @event = "connect.authenticated",  // 认证成功的事件
                 payload = new
                 {
                     token = _gatewayToken,  // 使用 Gateway Token 进行认证

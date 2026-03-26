@@ -23,8 +23,6 @@ public class GatewayProxyService : IGatewayProxyService
     private readonly SemaphoreSlim _lock = new(1, 1);
     private readonly ConcurrentDictionary<string, TaskCompletionSource<string>> _pendingRequests = new();
     private bool _isConnected = false;
-    private bool _isAuthenticated = false;  // 认证状态
-    private readonly SemaphoreSlim _authLock = new(1, 1);  // 认证锁
 
     public GatewayProxyService(ILogger<GatewayProxyService> logger, IConfiguration config)
     {
@@ -66,18 +64,10 @@ public class GatewayProxyService : IGatewayProxyService
             try
             {
                 await EnsureConnectedAsync();
-                
-                // 等待认证完成
-                await WaitForAuthenticationAsync();
 
                 if (_webSocket?.State != WebSocketState.Open)
                 {
                     throw new Exception("WebSocket is not connected");
-                }
-
-                if (!_isAuthenticated)
-                {
-                    throw new Exception("Not authenticated with Gateway");
                 }
 
                 using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(_timeoutSeconds));
@@ -100,7 +90,6 @@ public class GatewayProxyService : IGatewayProxyService
             {
                 _logger.LogError(ex, "Error forwarding to Gateway (attempt {Attempt}/{Max})", i + 1, _retryCount);
                 _isConnected = false; // 标记为断开连接
-                _isAuthenticated = false; // 标记为未认证
             }
 
             if (i < _retryCount - 1)
@@ -118,13 +107,12 @@ public class GatewayProxyService : IGatewayProxyService
         try
         {
             await EnsureConnectedAsync();
-            return _isConnected && _isAuthenticated && _webSocket?.State == WebSocketState.Open;
+            return _isConnected && _webSocket?.State == WebSocketState.Open;
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Gateway health check failed");
             _isConnected = false;
-            _isAuthenticated = false;
             return false;
         }
     }
@@ -147,19 +135,17 @@ public class GatewayProxyService : IGatewayProxyService
             _webSocket?.Dispose();
             _webSocket = new ClientWebSocket();
             
-            // 设置授权头
+            // 设置授权头 - 使用 Gateway Token 直接认证
             _webSocket.Options.SetRequestHeader("Authorization", $"Bearer {_gatewayToken}");
             
             await _webSocket.ConnectAsync(new Uri($"{_gatewayWsUrl}/ws"), CancellationToken.None);
             _isConnected = true;
-            _isAuthenticated = false; // 连接后尚未认证
-            _logger.LogInformation("Connected to Gateway at {GatewayWsUrl}, waiting for challenge", _gatewayWsUrl);
+            _logger.LogInformation("Connected to Gateway at {GatewayWsUrl}", _gatewayWsUrl);
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to connect to Gateway at {GatewayWsUrl}", _gatewayWsUrl);
             _isConnected = false;
-            _isAuthenticated = false;
             throw;
         }
         finally
@@ -167,9 +153,6 @@ public class GatewayProxyService : IGatewayProxyService
             _lock.Release();
         }
     }
-    
-    // 连接后不需要立即发送认证，等待 Gateway 发送挑战消息
-    // 认证将在 WebSocketReceiveLoop 中处理
     
     private async Task WebSocketReceiveLoopAsync()
     {
@@ -205,29 +188,6 @@ public class GatewayProxyService : IGatewayProxyService
                     try
                     {
                         using var doc = JsonDocument.Parse(json);
-                        
-                        // 检查是否为挑战消息
-                        if (doc.RootElement.TryGetProperty("type", out var typeElement) &&
-                            typeElement.GetString() == "event" &&
-                            doc.RootElement.TryGetProperty("event", out var eventElement) &&
-                            eventElement.GetString() == "connect.challenge")
-                        {
-                            _logger.LogInformation("Received challenge from Gateway, sending authentication response");
-                            // 发送认证响应
-                            await SendChallengeResponseAsync(doc.RootElement);
-                            continue;
-                        }
-                        
-                        // 检查是否为认证确认消息
-                        if (doc.RootElement.TryGetProperty("type", out var typeElement2) &&
-                            typeElement2.GetString() == "event" &&
-                            doc.RootElement.TryGetProperty("event", out var eventElement2) &&
-                            eventElement2.GetString() == "connect.authenticated")
-                        {
-                            _logger.LogInformation("Received authentication confirmation from Gateway");
-                            _isAuthenticated = true; // 设置认证状态为已认证
-                            continue;
-                        }
                         
                         // 检查是否有 messageId
                         if (doc.RootElement.TryGetProperty("messageId", out var messageIdElement))
@@ -270,67 +230,6 @@ public class GatewayProxyService : IGatewayProxyService
             }
         }
     }
-    
-    private async Task SendChallengeResponseAsync(JsonElement challengeElement)
-    {
-        try
-        {
-            _logger.LogInformation("Processing challenge from Gateway: {ChallengeJson}", challengeElement.ToString());
-            
-            // 发送认证响应 - 根据 Gateway 协议要求
-            var responseMessage = new
-            {
-                type = "event",
-                @event = "connect.authenticated",  // Gateway 期望的认证完成事件
-                payload = new
-                {
-                    token = _gatewayToken,  // 使用 Gateway Token 进行认证
-                    clientType = "middleware",
-                    capabilities = new[] { "message.forward", "file.proxy", "encryption.handle" },
-                    timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
-                }
-            };
-
-            var json = JsonSerializer.Serialize(responseMessage);
-            var bytes = Encoding.UTF8.GetBytes(json);
-            
-            await _webSocket.SendAsync(
-                new ArraySegment<byte>(bytes),
-                WebSocketMessageType.Text,
-                true,
-                CancellationToken.None);
-                
-            _logger.LogInformation("Sent authentication response to Gateway: {AuthJson}", json);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to send challenge response to Gateway");
-        }
-    }
-    
-    private async Task WaitForAuthenticationAsync(int maxWaitSeconds = 10)
-    {
-        var startTime = DateTime.UtcNow;
-        
-        while (!_isAuthenticated && DateTime.UtcNow - startTime < TimeSpan.FromSeconds(maxWaitSeconds))
-        {
-            if (_webSocket?.State != WebSocketState.Open)
-            {
-                throw new Exception("WebSocket connection lost while waiting for authentication");
-            }
-            
-            await Task.Delay(100); // 短暂等待
-        }
-        
-        if (!_isAuthenticated)
-        {
-            throw new Exception($"Authentication with Gateway timed out after {maxWaitSeconds} seconds");
-        }
-        
-        _logger.LogDebug("Successfully authenticated with Gateway");
-    }
-    
-
 }
 
 public static class TaskExtensions

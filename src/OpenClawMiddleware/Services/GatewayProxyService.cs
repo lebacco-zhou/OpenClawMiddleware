@@ -195,8 +195,8 @@ public class GatewayProxyService : IGatewayProxyService
                             doc.RootElement.TryGetProperty("event", out var eventElement) &&
                             eventElement.GetString() == "connect.challenge")
                         {
-                            // 处理挑战消息
-                            await HandleChallengeAsync(doc.RootElement);
+                            // 发送认证消息
+                            await SendAuthenticationAsync(doc.RootElement);
                             continue;
                         }
                         
@@ -234,6 +234,40 @@ public class GatewayProxyService : IGatewayProxyService
                 // 等待一段时间后重试
                 await Task.Delay(1000);
             }
+        }
+    }
+    
+    private async Task SendAuthenticationAsync(JsonElement challengeElement)
+    {
+        try
+        {
+            // 发送认证消息
+            var authMessage = new
+            {
+                type = "event",
+                @event = "connect.authenticate",
+                payload = new
+                {
+                    token = _gatewayToken,  // 使用 Gateway Token 进行认证
+                    clientType = "middleware",
+                    capabilities = new[] { "message.forward", "file.proxy", "encryption.handle" }
+                }
+            };
+
+            var json = JsonSerializer.Serialize(authMessage);
+            var bytes = Encoding.UTF8.GetBytes(json);
+            
+            await _webSocket.SendAsync(
+                new ArraySegment<byte>(bytes),
+                WebSocketMessageType.Text,
+                true,
+                CancellationToken.None);
+                
+            _logger.LogDebug("Sent authentication to Gateway");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to send authentication to Gateway");
         }
     }
     

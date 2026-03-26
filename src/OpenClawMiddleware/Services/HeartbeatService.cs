@@ -63,7 +63,7 @@ public class HeartbeatService : BackgroundService, IHeartbeatService
         }
     }
 
-    public Task StartAsync(CancellationToken ct)
+    public new Task StartAsync(CancellationToken ct)
     {
         return Task.CompletedTask;
     }

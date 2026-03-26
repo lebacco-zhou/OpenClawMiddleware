@@ -200,6 +200,7 @@ public class GatewayProxyService : IGatewayProxyService
                             doc.RootElement.TryGetProperty("event", out var eventElement) &&
                             eventElement.GetString() == "connect.challenge")
                         {
+                            _logger.LogInformation("Received challenge from Gateway, sending authentication response");
                             // 发送认证响应
                             await SendChallengeResponseAsync(doc.RootElement);
                             continue;
@@ -211,6 +212,7 @@ public class GatewayProxyService : IGatewayProxyService
                             var messageId = messageIdElement.GetString();
                             if (!string.IsNullOrEmpty(messageId) && _pendingRequests.TryRemove(messageId, out var tcs))
                             {
+                                _logger.LogDebug("Sending response for request {MessageId}", messageId);
                                 tcs.TrySetResult(json);
                             }
                             else
@@ -224,6 +226,10 @@ public class GatewayProxyService : IGatewayProxyService
                             // 消息没有 messageId，可能是直接响应或广播
                             _logger.LogDebug("Received message without messageId: {Json}", json);
                         }
+                    }
+                    catch (JsonException jex)
+                    {
+                        _logger.LogError(jex, "Invalid JSON received from Gateway: {Json}", json);
                     }
                     catch (Exception ex)
                     {
@@ -246,6 +252,8 @@ public class GatewayProxyService : IGatewayProxyService
     {
         try
         {
+            _logger.LogInformation("Processing challenge from Gateway: {ChallengeJson}", challengeElement.ToString());
+            
             // 发送挑战响应
             var responseMessage = new
             {
@@ -268,7 +276,7 @@ public class GatewayProxyService : IGatewayProxyService
                 true,
                 CancellationToken.None);
                 
-            _logger.LogDebug("Sent challenge response to Gateway");
+            _logger.LogInformation("Sent authentication response to Gateway: {AuthJson}", json);
         }
         catch (Exception ex)
         {

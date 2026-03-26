@@ -141,6 +141,9 @@ public class GatewayProxyService : IGatewayProxyService
             await _webSocket.ConnectAsync(new Uri($"{_gatewayWsUrl}/ws"), CancellationToken.None);
             _isConnected = true;
             _logger.LogInformation("Connected to Gateway at {GatewayWsUrl}", _gatewayWsUrl);
+            
+            // 连接后立即发送认证消息
+            await SendInitialAuthenticationAsync();
         }
         catch (Exception ex)
         {
@@ -151,6 +154,40 @@ public class GatewayProxyService : IGatewayProxyService
         finally
         {
             _lock.Release();
+        }
+    }
+    
+    private async Task SendInitialAuthenticationAsync()
+    {
+        try
+        {
+            // 发送初始认证消息
+            var authMessage = new
+            {
+                type = "event",
+                @event = "connect.authenticate",
+                payload = new
+                {
+                    token = _gatewayToken,  // 使用 Gateway Token 进行认证
+                    clientType = "middleware",
+                    capabilities = new[] { "message.forward", "file.proxy", "encryption.handle" }
+                }
+            };
+
+            var json = JsonSerializer.Serialize(authMessage);
+            var bytes = Encoding.UTF8.GetBytes(json);
+            
+            await _webSocket.SendAsync(
+                new ArraySegment<byte>(bytes),
+                WebSocketMessageType.Text,
+                true,
+                CancellationToken.None);
+                
+            _logger.LogDebug("Sent initial authentication to Gateway");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to send initial authentication to Gateway");
         }
     }
     

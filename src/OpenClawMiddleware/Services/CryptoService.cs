@@ -6,7 +6,7 @@ namespace OpenClawMiddleware.Services;
 public interface ICryptoService
 {
     Task<byte[]> NegotiateSessionKeyAsync(byte[] encryptedKey);
-    Task<(byte[] payload, byte[] tag)> DecryptAsync(byte[] ciphertext, byte[] nonce, byte[] tag);
+    Task<(byte[] payload, byte[] tag)> DecryptAsync(byte[] ciphertext, byte[] nonce, byte[] tag, byte[] sessionKey);
     Task<(byte[] payload, byte[] tag)> EncryptAsync(byte[] plaintext, byte[] nonce, byte[] sessionKey);
     bool ValidateTimestamp(long timestamp);
     bool IsNonceUsed(byte[] nonce);

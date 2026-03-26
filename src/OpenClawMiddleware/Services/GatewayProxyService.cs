@@ -16,10 +16,10 @@ public class GatewayProxyService : IGatewayProxyService
 {
     private ClientWebSocket? _webSocket;
     private readonly ILogger<GatewayProxyService> _logger;
-    private readonly string _gatewayWsUrl;
-    private readonly string _gatewayToken;
-    private readonly int _timeoutSeconds;
-    private readonly int _retryCount;
+    private string _gatewayWsUrl;
+    private string _gatewayToken;
+    private int _timeoutSeconds;
+    private int _retryCount;
     private readonly SemaphoreSlim _lock = new(1, 1);
     private readonly ConcurrentDictionary<string, TaskCompletionSource<string>> _pendingRequests = new();
     private bool _isConnected = false;
@@ -141,6 +141,9 @@ public class GatewayProxyService : IGatewayProxyService
             await _webSocket.ConnectAsync(new Uri($"{_gatewayWsUrl}/ws"), CancellationToken.None);
             _isConnected = true;
             _logger.LogInformation("Connected to Gateway at {GatewayWsUrl}", _gatewayWsUrl);
+            
+            // 发送连接握手消息，符合 OpenClaw 协议
+            await SendHandshakeAsync();
         }
         catch (Exception ex)
         {
@@ -151,6 +154,39 @@ public class GatewayProxyService : IGatewayProxyService
         finally
         {
             _lock.Release();
+        }
+    }
+
+    private async Task SendHandshakeAsync()
+    {
+        try
+        {
+            var handshakeMsg = new
+            {
+                type = "event",
+                event = "connect.authenticate",
+                payload = new
+                {
+                    token = _gatewayToken,
+                    clientType = "middleware",
+                    capabilities = new[] { "message.forward", "file.proxy", "encryption.handle" }
+                }
+            };
+
+            var json = JsonSerializer.Serialize(handshakeMsg);
+            var bytes = Encoding.UTF8.GetBytes(json);
+            
+            await _webSocket.SendAsync(
+                new ArraySegment<byte>(bytes),
+                WebSocketMessageType.Text,
+                true,
+                CancellationToken.None);
+                
+            _logger.LogDebug("Sent handshake to Gateway");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to send handshake to Gateway");
         }
     }
 

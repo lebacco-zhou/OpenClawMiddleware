@@ -26,16 +26,7 @@ public class HeartbeatService : BackgroundService, IHeartbeatService
         _connectionTimeout = TimeSpan.FromSeconds(config.GetValue<int>("Heartbeat:TimeoutSeconds", 90));
     }
 
-    public async Task StartAsync(CancellationToken ct)
-    {
-        // 初始化 Gateway 代理服务
-        if (_gatewayProxy is GatewayProxyService gatewayProxyService)
-        {
-            await gatewayProxyService.InitializeAsync();
-        }
-    }
-    
-    public new async Task StartAsync(CancellationToken stoppingToken)
+    public async Task InitializeAsync()
     {
         // 初始化 Gateway 代理服务
         if (_gatewayProxy is GatewayProxyService gatewayProxyService)
@@ -47,10 +38,7 @@ public class HeartbeatService : BackgroundService, IHeartbeatService
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         // 初始化 Gateway 代理服务
-        if (_gatewayProxy is GatewayProxyService gatewayProxyService)
-        {
-            await gatewayProxyService.InitializeAsync();
-        }
+        await InitializeAsync();
         
         _logger.LogInformation("Heartbeat service started with interval {Interval}s", _heartbeatInterval.TotalSeconds);
 

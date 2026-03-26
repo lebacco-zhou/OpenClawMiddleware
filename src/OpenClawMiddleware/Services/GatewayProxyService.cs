@@ -142,8 +142,7 @@ public class GatewayProxyService : IGatewayProxyService
             _isConnected = true;
             _logger.LogInformation("Connected to Gateway at {GatewayWsUrl}", _gatewayWsUrl);
             
-            // 连接后立即发送认证消息
-            await SendInitialAuthenticationAsync();
+            // 连接后不立即发送认证，等待 Gateway 发送挑战消息
         }
         catch (Exception ex)
         {
@@ -277,42 +276,7 @@ public class GatewayProxyService : IGatewayProxyService
         }
     }
     
-    private async Task HandleChallengeAsync(JsonElement challengeElement)
-    {
-        try
-        {
-            if (challengeElement.TryGetProperty("payload", out var payloadElement))
-            {
-                // 发送挑战响应
-                var challengeResponse = new
-                {
-                    type = "event",
-                    @event = "connect.authenticate",
-                    payload = new
-                    {
-                        token = _gatewayToken,  // 使用 Gateway Token 进行认证
-                        clientType = "middleware",
-                        capabilities = new[] { "message.forward", "file.proxy", "encryption.handle" }
-                    }
-                };
 
-                var json = JsonSerializer.Serialize(challengeResponse);
-                var bytes = Encoding.UTF8.GetBytes(json);
-                
-                await _webSocket.SendAsync(
-                    new ArraySegment<byte>(bytes),
-                    WebSocketMessageType.Text,
-                    true,
-                    CancellationToken.None);
-                    
-                _logger.LogDebug("Sent challenge response to Gateway");
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to handle Gateway challenge");
-        }
-    }
 }
 
 public static class TaskExtensions

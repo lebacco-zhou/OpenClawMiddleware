@@ -225,6 +225,19 @@ public class GatewayProxyService : IGatewayProxyService
                     try
                     {
                         using var doc = JsonDocument.Parse(json);
+                        
+                        // 检查是否为挑战消息
+                        if (doc.RootElement.TryGetProperty("type", out var typeElement) &&
+                            typeElement.GetString() == "event" &&
+                            doc.RootElement.TryGetProperty("@event", out var eventElement) &&
+                            eventElement.GetString() == "connect.challenge")
+                        {
+                            // 处理挑战消息
+                            await HandleChallengeAsync(doc.RootElement);
+                            continue;
+                        }
+                        
+                        // 检查是否有 messageId
                         if (doc.RootElement.TryGetProperty("messageId", out var messageIdElement))
                         {
                             var messageId = messageIdElement.GetString();
@@ -258,6 +271,43 @@ public class GatewayProxyService : IGatewayProxyService
                 // 等待一段时间后重试
                 await Task.Delay(1000);
             }
+        }
+    }
+    
+    private async Task HandleChallengeAsync(JsonElement challengeElement)
+    {
+        try
+        {
+            if (challengeElement.TryGetProperty("payload", out var payloadElement))
+            {
+                // 发送挑战响应
+                var challengeResponse = new
+                {
+                    type = "event",
+                    @event = "connect.authenticate",
+                    payload = new
+                    {
+                        token = _gatewayToken,  // 使用 Gateway Token 进行认证
+                        clientType = "middleware",
+                        capabilities = new[] { "message.forward", "file.proxy", "encryption.handle" }
+                    }
+                };
+
+                var json = JsonSerializer.Serialize(challengeResponse);
+                var bytes = Encoding.UTF8.GetBytes(json);
+                
+                await _webSocket.SendAsync(
+                    new ArraySegment<byte>(bytes),
+                    WebSocketMessageType.Text,
+                    true,
+                    CancellationToken.None);
+                    
+                _logger.LogDebug("Sent challenge response to Gateway");
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to handle Gateway challenge");
         }
     }
 }

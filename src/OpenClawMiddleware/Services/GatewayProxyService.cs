@@ -164,7 +164,7 @@ public class GatewayProxyService : IGatewayProxyService
             var handshakeMsg = new
             {
                 type = "event",
-                event = "connect.authenticate",
+                @event = "connect.authenticate",
                 payload = new
                 {
                     token = _gatewayToken,
@@ -189,7 +189,7 @@ public class GatewayProxyService : IGatewayProxyService
             _logger.LogError(ex, "Failed to send handshake to Gateway");
         }
     }
-
+    
     private async Task WebSocketReceiveLoopAsync()
     {
         var buffer = new byte[4096];

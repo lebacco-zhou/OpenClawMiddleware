@@ -23,6 +23,7 @@ public class GatewayProxyService : IGatewayProxyService
     private readonly SemaphoreSlim _lock = new(1, 1);
     private readonly ConcurrentDictionary<string, TaskCompletionSource<string>> _pendingRequests = new();
     private bool _isConnected = false;
+    private CancellationTokenSource? _heartbeatCts;
 
     public GatewayProxyService(ILogger<GatewayProxyService> logger, IConfiguration config)
     {
@@ -141,6 +142,9 @@ public class GatewayProxyService : IGatewayProxyService
             await _webSocket.ConnectAsync(new Uri($"{_gatewayWsUrl}/ws"), CancellationToken.None);
             _isConnected = true;
             _logger.LogInformation("Connected to Gateway at {GatewayWsUrl}", _gatewayWsUrl);
+            
+            // 启动心跳机制
+            StartHeartbeat();
         }
         catch (Exception ex)
         {
@@ -152,6 +156,58 @@ public class GatewayProxyService : IGatewayProxyService
         {
             _lock.Release();
         }
+    }
+    
+    private void StartHeartbeat()
+    {
+        _heartbeatCts?.Cancel();
+        _heartbeatCts = new CancellationTokenSource();
+        
+        _ = Task.Run(async () =>
+        {
+            var heartbeatInterval = TimeSpan.FromSeconds(15); // 每15秒发送一次心跳，小于20秒超时
+            
+            while (!_heartbeatCts.Token.IsCancellationRequested)
+            {
+                try
+                {
+                    if (_isConnected && _webSocket?.State == WebSocketState.Open)
+                    {
+                        // 发送心跳消息
+                        var heartbeatMessage = new
+                        {
+                            type = "event",
+                            @event = "connect.heartbeat",
+                            payload = new
+                            {
+                                timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+                            }
+                        };
+                        
+                        var json = JsonSerializer.Serialize(heartbeatMessage);
+                        var bytes = Encoding.UTF8.GetBytes(json);
+                        
+                        await _webSocket.SendAsync(
+                            new ArraySegment<byte>(bytes),
+                            WebSocketMessageType.Text,
+                            true,
+                            _heartbeatCts.Token);
+                            
+                        _logger.LogDebug("Sent heartbeat to Gateway");
+                    }
+                }
+                catch (OperationCanceledException)
+                {
+                    break;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Error sending heartbeat to Gateway");
+                }
+                
+                await Task.Delay(heartbeatInterval, _heartbeatCts.Token);
+            }
+        }, _heartbeatCts.Token);
     }
     
     private async Task WebSocketReceiveLoopAsync()

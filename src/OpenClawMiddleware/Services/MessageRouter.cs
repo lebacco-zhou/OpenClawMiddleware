@@ -117,6 +117,7 @@ public class MessageRouter : IMessageRouter
     private async Task<string> DecryptMessageAsync(EncryptedMessage message)
     {
         // TODO: 实现解密逻辑
+        // 需要获取会话密钥并解密
         return message.Payload ?? "";
     }
 

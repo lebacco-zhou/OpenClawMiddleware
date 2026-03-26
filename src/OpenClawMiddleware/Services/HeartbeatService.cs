@@ -34,10 +34,8 @@ public class HeartbeatService : BackgroundService, IHeartbeatService
         {
             try
             {
-                await Task.WhenAll(
-                    CheckClientHeartbeatsAsync(),
-                    CheckGatewayHealthAsync()
-                );
+                CheckClientHeartbeats();
+                await CheckGatewayHealthAsync();
             }
             catch (Exception ex)
             {
@@ -48,10 +46,9 @@ public class HeartbeatService : BackgroundService, IHeartbeatService
         }
     }
 
-    private void CheckClientHeartbeatsAsync()
+    private void CheckClientHeartbeats()
     {
         _connectionManager.CleanupIdleConnections(_connectionTimeout);
-        return Task.CompletedTask;
     }
 
     private async Task CheckGatewayHealthAsync()

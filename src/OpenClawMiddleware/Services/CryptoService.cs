@@ -35,7 +35,14 @@ public class CryptoService : ICryptoService, IDisposable
         if (!string.IsNullOrEmpty(keyPath) && File.Exists(keyPath))
         {
             var rsa = RSA.Create();
-            rsa.ImportFromPem(File.ReadAllText(keyPath));
+            var pemContent = File.ReadAllText(keyPath);
+            // 支持 PEM 格式导入
+            if (pemContent.Contains("BEGIN RSA PRIVATE KEY") || pemContent.Contains("BEGIN PRIVATE KEY"))
+            {
+                var pemLines = pemContent.Split('\n').Where(l => !l.StartsWith("-----")).ToArray();
+                var keyData = Convert.FromBase64String(string.Join("", pemLines));
+                rsa.ImportPkcs8PrivateKey(keyData, out _);
+            }
             _logger.LogInformation("Loaded RSA key from {Path}", keyPath);
             return rsa;
         }
@@ -48,7 +55,12 @@ public class CryptoService : ICryptoService, IDisposable
             {
                 Directory.CreateDirectory(directory);
             }
-            File.WriteAllText(keyPath, newRsa.ExportToPem());
+            // 导出为 PKCS#8 PEM 格式
+            var keyData = newRsa.ExportPkcs8PrivateKey();
+            var pem = "-----BEGIN PRIVATE KEY-----\n" +
+                      Convert.ToBase64String(keyData, Base64FormattingOptions.InsertLineBreaks) +
+                      "\n-----END PRIVATE KEY-----\n";
+            File.WriteAllText(keyPath, pem);
             _logger.LogInformation("Created new RSA key at {Path}", keyPath);
         }
         return newRsa;
@@ -60,9 +72,9 @@ public class CryptoService : ICryptoService, IDisposable
         return Task.FromResult(sessionKey);
     }
 
-    public Task<(byte[] payload, byte[] tag)> DecryptAsync(byte[] ciphertext, byte[] nonce, byte[] tag)
+    public Task<(byte[] payload, byte[] tag)> DecryptAsync(byte[] ciphertext, byte[] nonce, byte[] tag, byte[] sessionKey)
     {
-        using var aes = new AesGcm(32); // Will be set with actual key
+        using var aes = new AesGcm(sessionKey, tag.Length);
         var plaintext = new byte[ciphertext.Length];
         aes.Decrypt(nonce, ciphertext, tag, plaintext);
         return Task.FromResult((plaintext, tag));

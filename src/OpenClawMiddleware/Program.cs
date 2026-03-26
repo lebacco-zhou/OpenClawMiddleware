@@ -1,6 +1,7 @@
 using Serilog;
 using OpenClawMiddleware.Services;
 using OpenClawMiddleware.Handlers;
+using OpenClawMiddleware.Middleware;
 
 var builder = WebApplication.CreateBuilder(args);
 

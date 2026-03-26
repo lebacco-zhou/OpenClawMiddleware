@@ -254,16 +254,17 @@ public class GatewayProxyService : IGatewayProxyService
         {
             _logger.LogInformation("Processing challenge from Gateway: {ChallengeJson}", challengeElement.ToString());
             
-            // 发送挑战响应
+            // 发送挑战响应 - 根据 Gateway 协议要求
             var responseMessage = new
             {
                 type = "event",
-                @event = "connect.authenticate",
+                @event = "connect.authenticated",  // 使用正确的事件名称
                 payload = new
                 {
                     token = _gatewayToken,  // 使用 Gateway Token 进行认证
                     clientType = "middleware",
-                    capabilities = new[] { "message.forward", "file.proxy", "encryption.handle" }
+                    capabilities = new[] { "message.forward", "file.proxy", "encryption.handle" },
+                    timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
                 }
             };
 

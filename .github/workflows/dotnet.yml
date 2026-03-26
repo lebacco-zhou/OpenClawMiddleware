@@ -1,0 +1,54 @@
+name: .NET CI/CD
+
+on:
+  push:
+    branches: [ "main", "develop" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: '8.0.x'
+    
+    - name: Restore dependencies
+      run: dotnet restore OpenClawMiddleware.sln
+    
+    - name: Build
+      run: dotnet build OpenClawMiddleware.sln --configuration Release --no-restore
+    
+    - name: Test
+      run: dotnet test OpenClawMiddleware.sln --no-restore --verbosity normal --collect:"XPlat Code Coverage"
+    
+    - name: Publish
+      run: dotnet publish src/OpenClawMiddleware/OpenClawMiddleware.csproj -c Release -r linux-x64 --self-contained true -p:PublishSingleFile=true -o ./publish
+    
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: middleware-linux-x64
+        path: ./publish
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    
+    steps:
+    - name: Download build artifacts
+      uses: actions/download-artifact@v4
+      with:
+        name: middleware-linux-x64
+        path: ./publish
+    
+    - name: Deploy notification
+      run: |
+        echo "Build successful! Ready for deployment."
+        echo "Artifact size: $(du -sh ./publish | cut -f1)"

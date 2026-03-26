@@ -17,11 +17,11 @@ builder.Host.UseSerilog();
 // 注册服务
 builder.Services.AddSingleton<IConnectionManager, ConnectionManager>();
 builder.Services.AddSingleton<ICryptoService, CryptoService>();
-builder.Services.AddSingleton<IGatewayProxyService, GatewayProxyService>();
+builder.Services.AddSingleton<IClientTokenService, ClientTokenService>();
+builder.Services.AddSingleton<IFileStorageService, FileStorageService>();
+builder.Services.AddHttpClient<IGatewayProxyService, GatewayProxyService>();
 builder.Services.AddSingleton<IMessageRouter, MessageRouter>();
 builder.Services.AddSingleton<IWebSocketService, WebSocketService>();
-builder.Services.AddSingleton<IFileStorageService, FileStorageService>();
-builder.Services.AddSingleton<IClientTokenService, ClientTokenService>();
 builder.Services.AddHostedService<HeartbeatService>();
 
 var app = builder.Build();

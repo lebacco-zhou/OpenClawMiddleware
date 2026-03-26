@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
@@ -20,7 +21,7 @@ public class GatewayProxyService : IGatewayProxyService
     private readonly int _timeoutSeconds;
     private readonly int _retryCount;
     private readonly SemaphoreSlim _lock = new(1, 1);
-    private readonly Dictionary<string, TaskCompletionSource<string>> _pendingRequests = new();
+    private readonly ConcurrentDictionary<string, TaskCompletionSource<string>> _pendingRequests = new();
     private bool _isConnected = false;
 
     public GatewayProxyService(ILogger<GatewayProxyService> logger, IConfiguration config)

@@ -34,6 +34,15 @@ public class HeartbeatService : BackgroundService, IHeartbeatService
             await gatewayProxyService.InitializeAsync();
         }
     }
+    
+    public new async Task StartAsync(CancellationToken stoppingToken)
+    {
+        // 初始化 Gateway 代理服务
+        if (_gatewayProxy is GatewayProxyService gatewayProxyService)
+        {
+            await gatewayProxyService.InitializeAsync();
+        }
+    }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {

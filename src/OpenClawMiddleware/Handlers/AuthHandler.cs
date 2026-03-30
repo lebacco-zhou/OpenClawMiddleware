@@ -67,9 +67,8 @@ public class AuthHandler : IAuthHandler
             // 生成会话密钥
             var sessionKey = RandomNumberGenerator.GetBytes(32); // 256-bit AES key
             
-            // 用 RSA 公钥加密会话密钥返回给客户端
-            var rsa = _cryptoService.GetRsaPrivateKey();
-            var encryptedSessionKey = rsa.Encrypt(sessionKey, RSAEncryptionPadding.OaepSHA256);
+            // 由于 WebSocket 已经有 TLS 加密，直接发送会话密钥（Base64 编码）
+            var sessionKeyBase64 = Convert.ToBase64String(sessionKey);
 
             // 保存会话密钥到上下文
             context.ClientId = message.ClientId!;
@@ -78,7 +77,7 @@ public class AuthHandler : IAuthHandler
 
             _logger.LogInformation("Client {ClientId} authenticated successfully", message.ClientId);
 
-            await SendAuthResultAsync(context.Socket!, true, null, encryptedSessionKey);
+            await SendAuthResultAsync(context.Socket!, true, null, sessionKey: sessionKeyBase64);
         }
         catch (Exception ex)
         {
@@ -87,14 +86,14 @@ public class AuthHandler : IAuthHandler
         }
     }
 
-    private async Task SendAuthResultAsync(WebSocket socket, bool success, string? errorMessage, byte[]? encryptedSessionKey = null)
+    private async Task SendAuthResultAsync(WebSocket socket, bool success, string? errorMessage, string? sessionKey = null)
     {
         var result = new
         {
             type = "auth_result",
             success = success,
             sessionId = success ? Guid.NewGuid().ToString() : null,
-            encryptedSessionKey = encryptedSessionKey != null ? Convert.ToBase64String(encryptedSessionKey) : null,
+            sessionKey = sessionKey,
             expiresIn = success ? 3600 : (int?)null,
             error = errorMessage
         };
